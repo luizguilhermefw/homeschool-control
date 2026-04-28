@@ -1,0 +1,238 @@
+// ------------------------------------------------------
+// Prisma Schema para SaaS de Gestão de Homeschooling
+// ------------------------------------------------------
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------
+
+enum SubscriptionPlan {
+  FREE
+  PRO
+}
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+enum ActivityStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  SKIPPED
+}
+
+// ------------------------------------------------------
+// MODELS
+// ------------------------------------------------------
+
+model Tenant {
+  id        String           @id @default(uuid())
+  name      String
+  plan      SubscriptionPlan @default(FREE)
+  
+  // Relações Globais do Tenant
+  users         User[]
+  students      Student[]
+  academicYears AcademicYear[]
+  subjects      Subject[]
+  studyPlans    StudyPlan[]
+  planItems     StudyPlanItem[]
+  activities    Activity[]
+  progresses    ProgressRecord[]
+
+  // Timestamps & Soft Delete
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model User {
+  id           String   @id @default(uuid())
+  tenantId     String
+  email        String
+  passwordHash String
+  name         String
+  role         UserRole @default(ADMIN)
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+model Student {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  dateOfBirth DateTime?
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  studyPlans  StudyPlan[]
+  activities  Activity[]
+  progresses  ProgressRecord[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([tenantId])
+}
+
+model AcademicYear {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String   // ex: "2024-2025" ou "Ano Letivo 2024"
+  startDate DateTime
+  endDate   DateTime
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  studyPlans StudyPlan[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+}
+
+model Subject {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String   // ex: Matemática, História
+  color     String?  // Cor de destaque no UI
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  planItems StudyPlanItem[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+}
+
+// ------------------------------------------------------
+// PLANEJAMENTO (INTENÇÃO)
+// ------------------------------------------------------
+
+model StudyPlan {
+  id               String   @id @default(uuid())
+  tenantId         String
+  studentId        String
+  academicYearId   String
+  name             String   // ex: "Plano do 1º Semestre"
+  description      String?
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  
+  items        StudyPlanItem[]
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  @@index([tenantId])
+  @@index([tenantId, studentId])
+  @@index([tenantId, academicYearId])
+}
+
+model StudyPlanItem {
+  id               String   @id @default(uuid())
+  tenantId         String
+  studyPlanId      String
+  subjectId        String
+  title            String   // ex: "Adição e Subtração com Frações"
+  description      String?  @db.Text
+  sequenceOrder    Int      // Para ordenação visual
+  estimatedMinutes Int?
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  studyPlan StudyPlan @relation(fields: [studyPlanId], references: [id], onDelete: Cascade)
+  subject   Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  
+  activities Activity[] // Uma atividade pode estar vinculada a este item
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([studyPlanId, sequenceOrder])
+  @@index([tenantId])
+  @@index([tenantId, studyPlanId])
+  @@index([tenantId, subjectId])
+}
+
+// ------------------------------------------------------
+// EXECUÇÃO (AÇÃO)
+// ------------------------------------------------------
+
+model Activity {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  studentId          String
+  studyPlanItemId    String?  // Opcional! Se nulo, foi uma atividade avulsa.
+  
+  title              String   // ex: "Fizemos a lição de casa" (Pode ser auto-preenchido do PlanItem)
+  executionDate      DateTime // O dia em que realmente aconteceu
+  realMinutes        Int?     // Tempo real gasto
+  status             ActivityStatus @default(TODO)
+  notes              String?  @db.Text // Anotações do pai/mãe sobre como foi
+  
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student       Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studyPlanItem StudyPlanItem? @relation(fields: [studyPlanItemId], references: [id], onDelete: SetNull)
+
+  progressRecords ProgressRecord[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+  @@index([tenantId, studentId])
+  @@index([tenantId, executionDate])
+  @@index([tenantId, studyPlanItemId])
+}
+
+model ProgressRecord {
+  id          String   @id @default(uuid())
+  tenantId    String
+  studentId   String
+  activityId  String
+  
+  grade       Float?   // Nota quantitativa opcional
+  feedback    String?  @db.Text // Feedback detalhado
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+  @@index([tenantId, studentId])
+  @@index([tenantId, activityId])
+}
